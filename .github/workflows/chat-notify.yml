@@ -35,18 +35,24 @@ jobs:
             echo "stage_name=Unknown" >> $GITHUB_OUTPUT
           fi
 
-      - name: Send notification to Google Chat
-        uses: google-github-actions/send-google-chat-webhook@v0.0.2
-        with:
-          webhook_url: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
-          text: |
-            **Repository:** ${{ github.repository }}
-            **Branch:** ${{ github.ref_name }}
-            **Environment:** ${{ steps.env.outputs.stage_name }}
-            **Triggered By:** ${{ github.actor }}
-            **Workflow:** ${{ github.workflow }}
-            **Commit SHA:** ${{ github.sha }}
+      - name: Send notification to Google Chat (custom formatter)
+        env:
+          WEBHOOK_URL: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
+        run: |
+          TEXT=$(cat <<EOF
+**Repository:** ${{ github.repository }}
+**Branch:** ${{ github.ref_name }}
+**Environment:** ${{ steps.env.outputs.stage_name }}
+**Triggered By:** ${{ github.actor }}
+**Workflow:** ${{ github.workflow }}
+**Commit SHA:** ${{ github.sha }}
 
-            🕒 **Timestamp (UTC):** ${{ github.event.head_commit.timestamp }}
+🕒 **Timestamp (UTC):** ${{ github.event.head_commit.timestamp }}
 
-            🔗 **View Workflow:** https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+🔗 **View Workflow:** https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+EOF
+)
+
+          curl -X POST "$WEBHOOK_URL" \
+            -H 'Content-Type: application/json; charset=UTF-8' \
+            -d "$(jq -Rs --arg text "$TEXT" '{text: $text}')"
