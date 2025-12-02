@@ -1,0 +1,52 @@
+name: Notify Google Chat
+
+on:
+  push:
+    branches:
+      - "main"
+      - "Release"
+      - "Stage"
+      - "Development"
+  pull_request:
+    branches:
+      - "main"
+      - "Release"
+      - "Stage"
+      - "Development"
+    types: [opened, reopened, closed]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Determine Environment
+        id: env
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+            echo "stage_name=Main" >> $GITHUB_OUTPUT
+          elif [[ "${GITHUB_REF_NAME}" == "Release" ]]; then
+            echo "stage_name=Release" >> $GITHUB_OUTPUT
+          elif [[ "${GITHUB_REF_NAME}" == "Stage" ]]; then
+            echo "stage_name=Stage" >> $GITHUB_OUTPUT
+          elif [[ "${GITHUB_REF_NAME}" == "Development" ]]; then
+            echo "stage_name=Development" >> $GITHUB_OUTPUT
+          else
+            echo "stage_name=Unknown" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send notification to Google Chat
+        uses: google-github-actions/send-google-chat-webhook@v0.0.2
+        with:
+          webhook_url: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
+          text: |
+            **Repository:** ${{ github.repository }}
+            **Branch:** ${{ github.ref_name }}
+            **Environment:** ${{ steps.env.outputs.stage_name }}
+            **Triggered By:** ${{ github.actor }}
+            **Workflow:** ${{ github.workflow }}
+            **Commit SHA:** ${{ github.sha }}
+
+            🕒 **Time (UTC):** ${{ github.event.head_commit.timestamp }}
+
+            🔗 **View Workflow:** https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
