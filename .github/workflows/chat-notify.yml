@@ -47,6 +47,6 @@ jobs:
             **Workflow:** ${{ github.workflow }}
             **Commit SHA:** ${{ github.sha }}
 
-            🕒 **Time (UTC):** ${{ github.event.head_commit.timestamp }}
+            🕒 **Timestamp (UTC):** ${{ github.event.head_commit.timestamp }}
 
             🔗 **View Workflow:** https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
