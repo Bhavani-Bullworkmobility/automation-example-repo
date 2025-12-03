@@ -20,6 +20,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
       - name: Determine Environment
         id: env
         run: |
@@ -35,24 +38,70 @@ jobs:
             echo "stage_name=Unknown" >> $GITHUB_OUTPUT
           fi
 
-      - name: Send notification to Google Chat (custom formatter)
+      - name: Get commit message
+        id: commitMsg
+        run: echo "msg=$(git log -1 --pretty=format:%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Get changed files count
+        id: changes
+        run: echo "count=$(git diff --name-only HEAD~1 HEAD | wc -l)" >> "$GITHUB_OUTPUT"
+
+      - name: Determine Status Badge
+        id: status
+        if: always()
+        run: |
+          if [[ "${{ job.status }}" == "success" ]]; then
+            echo "badge=🟢 SUCCESS" >> $GITHUB_OUTPUT
+          elif [[ "${{ job.status }}" == "failure" ]]; then
+            echo "badge=🔴 FAILED" >> $GITHUB_OUTPUT
+          else
+            echo "badge=🟡 COMPLETED" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Collect PR Data
+        id: prdata
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "pr_title=${{ github.event.pull_request.title }}" >> $GITHUB_OUTPUT
+          echo "pr_merged=${{ github.event.pull_request.merged }}" >> $GITHUB_OUTPUT
+          echo "pr_merged_at=${{ github.event.pull_request.merged_at }}" >> $GITHUB_OUTPUT
+          echo "pr_user=${{ github.event.pull_request.user.login }}" >> $GITHUB_OUTPUT
+
+      - name: Send notification
         env:
           WEBHOOK_URL: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
         run: |
-          TEXT=$(cat <<EOF
-**Repository:** ${{ github.repository }}
-**Branch:** ${{ github.ref_name }}
-**Environment:** ${{ steps.env.outputs.stage_name }}
-**Triggered By:** ${{ github.actor }}
-**Workflow:** ${{ github.workflow }}
-**Commit SHA:** ${{ github.sha }}
+          TEXT="$(printf "%s\n" \
+            "${{ steps.status.outputs.badge }}" \
+            "" \
+            "**Repository:** ${{ github.repository }}" \
+            "**Branch:** ${{ github.ref_name }}" \
+            "**Environment:** ${{ steps.env.outputs.stage_name }}" \
+            "**Triggered By:** ${{ github.actor }}" \
+            "**Workflow:** ${{ github.workflow }}" \
+            "" \
+            "**Commit Message:** ${{ steps.commitMsg.outputs.msg }}" \
+            "**Commit SHA:** ${{ github.sha }}" \
+            "**Changed Files Count:** ${{ steps.changes.outputs.count }}" \
+          )"
 
-🕒 **Timestamp (UTC):** ${{ github.event.head_commit.timestamp }}
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            MERGED="${{ steps.prdata.outputs.pr_merged }}"
 
-🔗 **View Workflow:** https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-EOF
-)
+            TEXT="$TEXT\n**PR Title:** ${{ steps.prdata.outputs.pr_title }}"
+
+            if [[ "$MERGED" == "true" ]]; then
+              TEXT="$TEXT\n**PR Merged:** ✅ YES"
+              TEXT="$TEXT\n**Merged At:** ${{ steps.prdata.outputs.pr_merged_at }}"
+              TEXT="$TEXT\n**Merged By:** ${{ github.actor }}"
+            else
+              TEXT="$TEXT\n**PR Merged:** ❌ NO"
+            fi
+          fi
+
+          TEXT="$TEXT\n\n🕒 **Timestamp (UTC):** $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          TEXT="$TEXT\n\n🔗 **View Workflow:** https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
           curl -X POST "$WEBHOOK_URL" \
-            -H 'Content-Type: application/json; charset=UTF-8' \
+            -H "Content-Type: application/json" \
             -d "$(jq -Rs --arg text "$TEXT" '{text: $text}')"
