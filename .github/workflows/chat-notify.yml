@@ -2,17 +2,9 @@ name: Notify Google Chat
 
 on:
   push:
-    branches:
-      - "main"
-      - "Release"
-      - "Stage"
-      - "Development"
+    branches: ["main", "Release", "Stage", "Development"]
   pull_request:
-    branches:
-      - "main"
-      - "Release"
-      - "Stage"
-      - "Development"
+    branches: ["main", "Release", "Stage", "Development"]
     types: [opened, reopened, closed]
 
 jobs:
@@ -20,29 +12,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Determine Environment
-        id: env
-        run: |
-          if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
-            echo "stage_name=Main" >> $GITHUB_OUTPUT
-          elif [[ "${GITHUB_REF_NAME}" == "Release" ]]; then
-            echo "stage_name=Release" >> $GITHUB_OUTPUT
-          elif [[ "${GITHUB_REF_NAME}" == "Stage" ]]; then
-            echo "stage_name=Stage" >> $GITHUB_OUTPUT
-          elif [[ "${GITHUB_REF_NAME}" == "Development" ]]; then
-            echo "stage_name=Development" >> $GITHUB_OUTPUT
-          else
-            echo "stage_name=Unknown" >> $GITHUB_OUTPUT
-          fi
-
       - name: Get commit message
         id: commitMsg
-        run: echo "msg=$(git log -1 --pretty=format:%s)" >> "$GITHUB_OUTPUT"
+        run: echo "msg=$(git log -1 --pretty=format:%s)" >> $GITHUB_OUTPUT
 
-      - name: Get changed files count
+      - name: Get changed files
         id: changes
         run: |
           if git rev-parse HEAD^ >/dev/null 2>&1; then
@@ -51,50 +25,18 @@ jobs:
             echo "count=0" >> $GITHUB_OUTPUT
           fi
 
-      - name: Determine Status Badge
-        id: status
-        if: always()
-        run: |
-          if [[ "${{ job.status }}" == "success" ]]; then
-            echo "badge=🟢 SUCCESS" >> $GITHUB_OUTPUT
-          elif [[ "${{ job.status }}" == "failure" ]]; then
-            echo "badge=🔴 FAILED" >> $GITHUB_OUTPUT
-          else
-            echo "badge=🟡 COMPLETED" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Send message to Google Chat
-        env:
-          WEBHOOK_URL: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
+      - name: Build JSON message (no EOF)
         run: |
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-          MESSAGE=$(jq -n \
-            --arg badge "${{ steps.status.outputs.badge }}" \
-            --arg repo "${{ github.repository }}" \
-            --arg branch "${{ github.ref_name }}" \
-            --arg env "${{ steps.env.outputs.stage_name }}" \
-            --arg actor "${{ github.actor }}" \
-            --arg workflow "${{ github.workflow }}" \
-            --arg msg "${{ steps.commitMsg.outputs.msg }}" \
-            --arg sha "${{ github.sha }}" \
-            --arg count "${{ steps.changes.outputs.count }}" \
-            --arg time "$TIMESTAMP" \
-            --arg url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            '{ text:
-              ($badge + "\n" +
-              "Repository: " + $repo + "\n" +
-              "Branch: " + $branch + "\n" +
-              "Environment: " + $env + "\n" +
-              "Triggered By: " + $actor + "\n" +
-              "Workflow: " + $workflow + "\n\n" +
-              "Commit Message: " + $msg + "\n" +
-              "Commit SHA: " + $sha + "\n" +
-              "Changed Files Count: " + $count + "\n\n" +
-              "Timestamp (UTC): " + $time + "\n\n" +
-              "View Workflow: " + $url)
-            }')
+          printf '%s\n' "{
+            \"text\": \"Repository: ${{ github.repository }}\\nBranch: ${{ github.ref_name }}\\nTriggered By: ${{ github.actor }}\\n\\nCommit Message: ${{ steps.commitMsg.outputs.msg }}\\nCommit SHA: ${{ github.sha }}\\nChanged Files Count: ${{ steps.changes.outputs.count }}\\n\\nTimestamp (UTC): $TIMESTAMP\\n\\nView Workflow:\\nhttps://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+          }" > message.json
 
+      - name: Send to Google Chat
+        env:
+          WEBHOOK_URL: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
+        run: |
           curl -X POST "$WEBHOOK_URL" \
             -H "Content-Type: application/json" \
-            -d "$MESSAGE"
+            -d @message.json
