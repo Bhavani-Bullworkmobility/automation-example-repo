@@ -12,18 +12,29 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout full history
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
       - name: Get commit message
         id: commitMsg
         run: echo "msg=$(git log -1 --pretty=format:%s)" >> $GITHUB_OUTPUT
 
-      - name: Get changed files
+      - name: Get changed files count (works for push + PR)
         id: changes
         run: |
-          if git rev-parse HEAD^ >/dev/null 2>&1; then
-            echo "count=$(git diff --name-only HEAD^ HEAD | wc -l)" >> $GITHUB_OUTPUT
+          git fetch --depth=2
+          
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+            COUNT=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | wc -l)
           else
-            echo "count=0" >> $GITHUB_OUTPUT
+            COUNT=$(git diff --name-only HEAD^ HEAD | wc -l || echo 0)
           fi
+
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
 
       - name: Build JSON message
         run: |
@@ -37,10 +48,10 @@ jobs:
         env:
           RAW_URL: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
         run: |
-          # FIX WEBHOOK URL IF MULTILINE
+          # Fix webhook if GitHub inserted newline/space
           WEBHOOK_URL=$(echo "$RAW_URL" | tr -d '\n' | tr -d '\r' | tr -d ' ')
-          
-          echo "Using cleaned webhook URL:"
+
+          echo "Sending to:"
           echo "$WEBHOOK_URL"
 
           curl -X POST "$WEBHOOK_URL" \
