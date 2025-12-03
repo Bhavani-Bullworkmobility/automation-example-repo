@@ -42,9 +42,14 @@ jobs:
         id: commitMsg
         run: echo "msg=$(git log -1 --pretty=format:%s)" >> "$GITHUB_OUTPUT"
 
-      - name: Get changed files count
+      - name: Get changed files count safely
         id: changes
-        run: echo "count=$(git diff --name-only HEAD~1 HEAD | wc -l)" >> "$GITHUB_OUTPUT"
+        run: |
+          if git rev-parse HEAD^ >/dev/null 2>&1; then
+            echo "count=$(git diff --name-only HEAD^ HEAD | wc -l)" >> $GITHUB_OUTPUT
+          else
+            echo "count=0" >> $GITHUB_OUTPUT
+          fi
 
       - name: Determine Status Badge
         id: status
@@ -58,15 +63,6 @@ jobs:
             echo "badge=🟡 COMPLETED" >> $GITHUB_OUTPUT
           fi
 
-      - name: Collect PR Data
-        id: prdata
-        if: github.event_name == 'pull_request'
-        run: |
-          echo "pr_title=${{ github.event.pull_request.title }}" >> $GITHUB_OUTPUT
-          echo "pr_merged=${{ github.event.pull_request.merged }}" >> $GITHUB_OUTPUT
-          echo "pr_merged_at=${{ github.event.pull_request.merged_at }}" >> $GITHUB_OUTPUT
-          echo "pr_user=${{ github.event.pull_request.user.login }}" >> $GITHUB_OUTPUT
-
       - name: Send notification
         env:
           WEBHOOK_URL: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
@@ -74,34 +70,22 @@ jobs:
           TEXT="$(printf "%s\n" \
             "${{ steps.status.outputs.badge }}" \
             "" \
-            "**Repository:** ${{ github.repository }}" \
-            "**Branch:** ${{ github.ref_name }}" \
-            "**Environment:** ${{ steps.env.outputs.stage_name }}" \
-            "**Triggered By:** ${{ github.actor }}" \
-            "**Workflow:** ${{ github.workflow }}" \
+            "**Repository:** \${{ github.repository }}" \
+            "**Branch:** \${{ github.ref_name }}" \
+            "**Environment:** \${{ steps.env.outputs.stage_name }}" \
+            "**Triggered By:** \${{ github.actor }}" \
+            "**Workflow:** \${{ github.workflow }}" \
             "" \
-            "**Commit Message:** ${{ steps.commitMsg.outputs.msg }}" \
-            "**Commit SHA:** ${{ github.sha }}" \
-            "**Changed Files Count:** ${{ steps.changes.outputs.count }}" \
+            "**Commit Message:** \${{ steps.commitMsg.outputs.msg }}" \
+            "**Commit SHA:** \${{ github.sha }}" \
+            "**Changed Files Count:** \${{ steps.changes.outputs.count }}" \
+            "" \
+            "🕒 **Timestamp (UTC):** $(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            "" \
+            "🔗 **View Workflow:** https://github.com/\${{ github.repository }}/actions/runs/\${{ github.run_id }}" \
           )"
 
-          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
-            MERGED="${{ steps.prdata.outputs.pr_merged }}"
-
-            TEXT="$TEXT\n**PR Title:** ${{ steps.prdata.outputs.pr_title }}"
-
-            if [[ "$MERGED" == "true" ]]; then
-              TEXT="$TEXT\n**PR Merged:** ✅ YES"
-              TEXT="$TEXT\n**Merged At:** ${{ steps.prdata.outputs.pr_merged_at }}"
-              TEXT="$TEXT\n**Merged By:** ${{ github.actor }}"
-            else
-              TEXT="$TEXT\n**PR Merged:** ❌ NO"
-            fi
-          fi
-
-          TEXT="$TEXT\n\n🕒 **Timestamp (UTC):** $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-          TEXT="$TEXT\n\n🔗 **View Workflow:** https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-          curl -X POST "$WEBHOOK_URL" \
+          jq -n --arg text "$TEXT" '{text: $text}' |
+            curl -X POST "$WEBHOOK_URL" \
             -H "Content-Type: application/json" \
-            -d "$(jq -Rs --arg text "$TEXT" '{text: $text}')"
+            -d @-
