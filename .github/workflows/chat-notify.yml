@@ -42,7 +42,7 @@ jobs:
         id: commitMsg
         run: echo "msg=$(git log -1 --pretty=format:%s)" >> "$GITHUB_OUTPUT"
 
-      - name: Get changed files count safely
+      - name: Get changed files count
         id: changes
         run: |
           if git rev-parse HEAD^ >/dev/null 2>&1; then
@@ -63,29 +63,38 @@ jobs:
             echo "badge=🟡 COMPLETED" >> $GITHUB_OUTPUT
           fi
 
-      - name: Send notification
+      - name: Send message to Google Chat
         env:
           WEBHOOK_URL: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
         run: |
-          TEXT="$(printf "%s\n" \
-            "${{ steps.status.outputs.badge }}" \
-            "" \
-            "**Repository:** \${{ github.repository }}" \
-            "**Branch:** \${{ github.ref_name }}" \
-            "**Environment:** \${{ steps.env.outputs.stage_name }}" \
-            "**Triggered By:** \${{ github.actor }}" \
-            "**Workflow:** \${{ github.workflow }}" \
-            "" \
-            "**Commit Message:** \${{ steps.commitMsg.outputs.msg }}" \
-            "**Commit SHA:** \${{ github.sha }}" \
-            "**Changed Files Count:** \${{ steps.changes.outputs.count }}" \
-            "" \
-            "🕒 **Timestamp (UTC):** $(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-            "" \
-            "🔗 **View Workflow:** https://github.com/\${{ github.repository }}/actions/runs/\${{ github.run_id }}" \
-          )"
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-          jq -n --arg text "$TEXT" '{text: $text}' |
-            curl -X POST "$WEBHOOK_URL" \
+          MESSAGE=$(jq -n \
+            --arg badge "${{ steps.status.outputs.badge }}" \
+            --arg repo "${{ github.repository }}" \
+            --arg branch "${{ github.ref_name }}" \
+            --arg env "${{ steps.env.outputs.stage_name }}" \
+            --arg actor "${{ github.actor }}" \
+            --arg workflow "${{ github.workflow }}" \
+            --arg msg "${{ steps.commitMsg.outputs.msg }}" \
+            --arg sha "${{ github.sha }}" \
+            --arg count "${{ steps.changes.outputs.count }}" \
+            --arg time "$TIMESTAMP" \
+            --arg url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            '{ text:
+              ($badge + "\n" +
+              "Repository: " + $repo + "\n" +
+              "Branch: " + $branch + "\n" +
+              "Environment: " + $env + "\n" +
+              "Triggered By: " + $actor + "\n" +
+              "Workflow: " + $workflow + "\n\n" +
+              "Commit Message: " + $msg + "\n" +
+              "Commit SHA: " + $sha + "\n" +
+              "Changed Files Count: " + $count + "\n\n" +
+              "Timestamp (UTC): " + $time + "\n\n" +
+              "View Workflow: " + $url)
+            }')
+
+          curl -X POST "$WEBHOOK_URL" \
             -H "Content-Type: application/json" \
-            -d @-
+            -d "$MESSAGE"
